@@ -1,0 +1,6 @@
+venv/
+__pycache__/
+*.pyc
+CSV_MINERS/CSV_MINERS/mined_aggregated_data_set.csv
+CSV_MINERS/CSV_MINERS/modeling_dataset.jsonl
+CSV_MINERS/CSV_MINERS/flow_sequences.jsonl

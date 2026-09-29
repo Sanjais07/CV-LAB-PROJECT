@@ -1,0 +1,96 @@
+STEP 1 - Full recursive folder listing
+========================================
+Path: CSV_MINERS\.DS_Store
+Size: 6148 bytes
+Modified: 2026-09-27 20:53:11
+Type: Binary data
+Flag: Plausible dataset file.
+--------------------
+Path: CSV_MINERS\cryptomining_ip_addresses.txt
+Size: 630 bytes
+Modified: 2026-09-27 20:53:18
+Type: Text data
+Flag: Possible AppleDouble/Mac shadow or non-data file (<5KB).
+--------------------
+Path: CSV_MINERS\mined_aggregated_data_set.csv
+Size: 562960367 bytes
+Modified: 2026-09-27 20:53:17
+Type: Text data
+Flag: Plausible dataset file.
+--------------------
+Path: __MACOSX\CSV_MINERS\._.DS_Store
+Size: 120 bytes
+Modified: 2026-09-27 20:53:18
+Type: Binary data
+Flag: Possible AppleDouble/Mac shadow or non-data file (<5KB).
+--------------------
+Path: __MACOSX\CSV_MINERS\._cryptomining_ip_addresses.txt
+Size: 506 bytes
+Modified: 2026-09-27 20:53:18
+Type: Binary data
+Flag: Possible AppleDouble/Mac shadow or non-data file (<5KB).
+--------------------
+Path: __MACOSX\CSV_MINERS\._mined_aggregated_data_set.csv
+Size: 233 bytes
+Modified: 2026-09-27 20:53:18
+Type: Binary data
+Flag: Possible AppleDouble/Mac shadow or non-data file (<5KB).
+--------------------
+
+STEP 2 & 3 - Identify and Audit Real Dataset
+========================================
+
+Candidate: CSV_MINERS\.DS_Store (Size: 6148 bytes)
+Error opening as CSV: 'utf-8' codec can't decode byte 0x80 in position 3131: invalid start byte
+
+Candidate: CSV_MINERS\mined_aggregated_data_set.csv (Size: 562960367 bytes)
+Status: Successfully opened via pd.read_csv()
+Columns: ['frame.time', 'ip.src', 'ip.dst', 'tcp.srcport', 'tcp.dstport', 'frame.len']
+First 5 rows:
+                                                   frame.time           ip.src           ip.dst tcp.srcport tcp.dstport frame.len
+0  Oct  9, 2022 06:05:27.788491326 South Africa Standard Time  147.182.169.120      159.89.85.4          22       55784       126
+1  Oct  9, 2022 06:05:27.788555296 South Africa Standard Time      159.89.85.4  147.182.169.120       55784          22        66
+2  Oct  9, 2022 06:05:27.822165561 South Africa Standard Time  147.182.169.120      159.89.85.4          22       55784       246
+3  Oct  9, 2022 06:05:27.822211881 South Africa Standard Time      159.89.85.4  147.182.169.120       55784          22        66
+4  Oct  9, 2022 06:05:27.832726885 South Africa Standard Time  159.223.142.212      159.89.85.4       45078        8080        56
+
+Step 3 Audit:
+Exact column dtypes:
+frame.time     str
+ip.src         str
+ip.dst         str
+tcp.srcport    str
+tcp.dstport    str
+frame.len      str
+Total row count (len(df)): 5134186
+Null/missing value count per column:
+frame.time           0
+ip.src           17501
+ip.dst           17501
+tcp.srcport    1493946
+tcp.dstport    1493946
+frame.len            1
+
+Flow-identifying fields (5-tuple):
+Found apparent 5-tuple fields: ['ip.src', 'ip.dst', 'tcp.srcport', 'tcp.dstport']
+
+Timestamp/duration fields:
+Found apparent time/duration fields: ['frame.time']
+
+STEP 4 - Cross-check against paper
+Paper claimed 84,344 total flows. Actual: 5134186
+
+STEP 5 - Non-data files
+========================================
+
+Non-dataset file: CSV_MINERS\cryptomining_ip_addresses.txt (Size: 630)
+First 100 bytes: b'188.166.231.235:443 - DOGE Asia\n64.225.31.157:3333 - ETH US\n188.166.231.235:80 - ETH Asia \n64.225.31'
+
+Non-dataset file: __MACOSX\CSV_MINERS\._.DS_Store (Size: 120)
+First 100 bytes: b'\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X        \x00\x02\x00\x00\x00\t\x00\x00\x002\x00\x00\x00F\x00\x00\x00\x02\x00\x00\x00x\x00\x00\x00\x00        @\x10\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00ATTR\x00\x00\x00\x00\x00\x00\x00x\x00\x00\x00x'
+
+Non-dataset file: __MACOSX\CSV_MINERS\._cryptomining_ip_addresses.txt (Size: 506)
+First 100 bytes: b'\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X        \x00\x02\x00\x00\x00\t\x00\x00\x002\x00\x00\x01\xc8\x00\x00\x00\x02\x00\x00\x01\xfa\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00ATTR\x00\x00\x00\x00\x00\x00\x01\xfa\x00\x00\x018'
+
+Non-dataset file: __MACOSX\CSV_MINERS\._mined_aggregated_data_set.csv (Size: 233)
+First 100 bytes: b'\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X        \x00\x02\x00\x00\x00\t\x00\x00\x002\x00\x00\x00\xb7\x00\x00\x00\x02\x00\x00\x00\xe9\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00ATTR\x00\x00\x00\x00\x00\x00\x00\xe9\x00\x00\x00\xc0'
