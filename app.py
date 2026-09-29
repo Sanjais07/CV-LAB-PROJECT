@@ -15,47 +15,116 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom Styling
-st.markdown("""
+import base64
+
+def get_base64_of_bin_file(bin_file):
+    with open(bin_file, 'rb') as f:
+        data = f.read()
+    return base64.b64encode(data).decode()
+
+bg_base64 = get_base64_of_bin_file(r"cyber_security_bg.png")
+
+# Custom Styling with Dark Cybercrime Background
+st.markdown(f"""
 <style>
-    .main-title {
-        font-size: 2.5rem;
-        font-weight: 700;
-        background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+    header[data-testid="stHeader"] {{
+        background-color: transparent !important;
+    }}
+    .stApp {{
+        background: linear-gradient(rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0.92)), url("data:image/png;base64,{bg_base64}");
+        background-size: cover;
+        background-position: center;
+        background-attachment: fixed;
+    }}
+    .main-title {{
+        font-size: 2.6rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, #38bdf8 0%, #818cf8 50%, #c084fc 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         margin-bottom: 0.5rem;
-    }
-    .sub-title {
-        font-size: 1.1rem;
-        color: #94a3b8;
+        text-shadow: 0 0 30px rgba(99, 102, 241, 0.3);
+    }}
+    .sub-title {{
+        font-size: 1.15rem;
+        color: #e2e8f0;
+        font-weight: 500;
         margin-bottom: 2rem;
-    }
-    .metric-card {
-        background: #1e293b;
-        border: 1px solid #334155;
-        border-radius: 12px;
+    }}
+    .metric-card {{
+        background: rgba(30, 41, 59, 0.85);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(99, 102, 241, 0.4);
+        border-radius: 14px;
         padding: 1.25rem;
         text-align: center;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-    }
-    .metric-value {
-        font-size: 2.2rem;
-        font-weight: 700;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    }}
+    .metric-value {{
+        font-size: 2.3rem;
+        font-weight: 800;
         color: #38bdf8;
-    }
-    .metric-label {
-        font-size: 0.9rem;
-        color: #94a3b8;
-        margin-top: 0.25rem;
-    }
-    .highlight-card {
-        background: #0f172a;
-        border: 2px solid #6366f1;
-        border-radius: 12px;
-        padding: 1.25rem;
+    }}
+    .metric-label {{
+        font-size: 0.95rem;
+        color: #f1f5f9;
+        font-weight: 600;
+        margin-top: 0.35rem;
+    }}
+    .highlight-card {{
+        background: rgba(15, 23, 42, 0.92) !important;
+        backdrop-filter: blur(16px);
+        border: 2px solid #6366f1 !important;
+        border-radius: 14px;
+        padding: 1.5rem;
         margin-bottom: 1.5rem;
-    }
+        box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.25);
+    }}
+    /* Enforce dark theme glassmorphism & high-contrast text on Sidebar */
+    [data-testid="stSidebar"] {{
+        background-color: rgba(15, 23, 42, 0.95) !important;
+        border-right: 1px solid rgba(99, 102, 241, 0.3) !important;
+    }}
+    [data-testid="stSidebar"] * {{
+        color: #ffffff !important;
+    }}
+    [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3 {{
+        color: #38bdf8 !important;
+        font-weight: 700 !important;
+    }}
+    [data-testid="stSidebar"] .stSelectbox label, [data-testid="stSidebar"] .stSlider label {{
+        color: #f1f5f9 !important;
+        font-size: 1.05rem !important;
+        font-weight: 600 !important;
+    }}
+    /* Selectbox dropdown input styling */
+    div[data-baseweb="select"] > div {{
+        background-color: #1e293b !important;
+        color: #ffffff !important;
+        border: 1px solid #6366f1 !important;
+        border-radius: 8px !important;
+    }}
+    div[data-baseweb="select"] span {{
+        color: #ffffff !important;
+    }}
+    /* Enforce high contrast text across Streamlit elements */
+    .stMarkdown, p, span, label, h1, h2, h3, h4, h5, h6 {{
+        color: #ffffff !important;
+    }}
+    .stTabs [data-baseweb="tab-list"] {{
+        background: rgba(30, 41, 59, 0.8);
+        border-radius: 10px;
+        padding: 5px;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+        color: #cbd5e1 !important;
+        font-weight: 600;
+    }}
+    .stTabs [aria-selected="true"] {{
+        color: #38bdf8 !important;
+        font-weight: 700;
+        border-bottom: 3px solid #38bdf8 !important;
+    }}
 </style>
 """, unsafe_allow_html=True)
 
