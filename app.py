@@ -5,7 +5,8 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import plotly.express as px
-from sklearn.metrics import roc_auc_score, f1_score, roc_curve, confusion_matrix
+import pandas as pd
+from sklearn.metrics import roc_auc_score, f1_score, roc_curve, confusion_matrix, precision_recall_curve
 
 st.set_page_config(
     page_title="Cryptomining Traffic Detection Dashboard",
@@ -49,7 +50,7 @@ st.markdown("""
         margin-top: 0.25rem;
     }
     .highlight-card {
-        background: #1e1b4b;
+        background: #0f172a;
         border: 2px solid #6366f1;
         border-radius: 12px;
         padding: 1.25rem;
@@ -103,32 +104,35 @@ def run_evaluation():
 
     oof_main_probs = np.zeros(len(y_main))
     oof_hard_probs = np.zeros(len(y_hard))
+    vps_fold_stats = []
+
+    X_main_t = torch.tensor(X_main, dtype=torch.float32, device=device)
+    y_main_t = torch.tensor(y_main, dtype=torch.float32, device=device)
 
     for fold_i, vps in enumerate(SERVER_IPS):
-        train_mask = g_main != vps
-        test_main_mask = g_main == vps
-        test_hard_mask = g_hard == vps
+        train_mask = torch.tensor(g_main != vps, device=device)
+        test_main_mask_np = (g_main == vps)
+        test_hard_mask_np = (g_hard == vps)
 
-        X_train, y_train = X_main[train_mask], y_main[train_mask]
+        X_train_t = X_main_t[train_mask]
+        y_train_t = y_main_t[train_mask]
 
         model = SmallCNN().to(device)
-        n_pos = y_train.sum()
-        n_neg = len(y_train) - n_pos
+        n_pos = int(y_train_t.sum().item())
+        n_neg = len(y_train_t) - n_pos
         pos_weight = torch.tensor([n_neg / max(n_pos, 1)], dtype=torch.float32, device=device)
         criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
 
-        X_t = torch.tensor(X_train, dtype=torch.float32)
-        y_t = torch.tensor(y_train, dtype=torch.float32)
-        n = len(X_t)
+        n = len(X_train_t)
 
         model.train()
         for epoch in range(30):
-            perm = torch.randperm(n)
-            for i in range(0, n, 64):
-                idx = perm[i:i + 64]
-                xb = X_t[idx].to(device)
-                yb = y_t[idx].to(device)
+            perm = torch.randperm(n, device=device)
+            for i in range(0, n, 256):
+                idx = perm[i:i + 256]
+                xb = X_train_t[idx]
+                yb = y_train_t[idx]
                 optimizer.zero_grad()
                 logits = model(xb)
                 loss = criterion(logits, yb)
@@ -137,12 +141,22 @@ def run_evaluation():
 
         model.eval()
         with torch.no_grad():
-            if test_main_mask.sum() > 0:
-                X_tm = torch.tensor(X_main[test_main_mask], dtype=torch.float32).to(device)
-                oof_main_probs[test_main_mask] = torch.sigmoid(model(X_tm)).cpu().numpy()
-            if test_hard_mask.sum() > 0:
-                X_th = torch.tensor(X_hard[test_hard_mask], dtype=torch.float32).to(device)
-                oof_hard_probs[test_hard_mask] = torch.sigmoid(model(X_th)).cpu().numpy()
+            if test_main_mask_np.sum() > 0:
+                X_tm = torch.tensor(X_main[test_main_mask_np], dtype=torch.float32).to(device)
+                probs_m = torch.sigmoid(model(X_tm)).cpu().numpy()
+                oof_main_probs[test_main_mask_np] = probs_m
+            if test_hard_mask_np.sum() > 0:
+                X_th = torch.tensor(X_hard[test_hard_mask_np], dtype=torch.float32).to(device)
+                probs_h = torch.sigmoid(model(X_th)).cpu().numpy()
+                oof_hard_probs[test_hard_mask_np] = probs_h
+                fold_auc = roc_auc_score(y_hard[test_hard_mask_np], probs_h) if len(np.unique(y_hard[test_hard_mask_np])) > 1 else 1.0
+                vps_fold_stats.append({
+                    "VPS Node": vps,
+                    "Train Samples": len(y_train_t),
+                    "Main Test Samples": test_main_mask_np.sum(),
+                    "Hard Test Samples": test_hard_mask_np.sum(),
+                    "Hard Fold AUC": fold_auc
+                })
 
     # Deduplicated set
     is_mining = y_hard == 1
@@ -158,10 +172,10 @@ def run_evaluation():
         dedup_labels.append(y_hard[i])
 
     return {
-        "y_main": y_main, "oof_main_probs": oof_main_probs,
-        "y_hard": y_hard, "oof_hard_probs": oof_hard_probs,
+        "y_main": y_main, "oof_main_probs": oof_main_probs, "g_main": g_main,
+        "y_hard": y_hard, "oof_hard_probs": oof_hard_probs, "g_hard": g_hard,
         "dedup_labels": np.array(dedup_labels), "dedup_probs": np.array(dedup_probs),
-        "X_main": X_main, "X_hard": X_hard
+        "X_main": X_main, "X_hard": X_hard, "vps_stats": pd.DataFrame(vps_fold_stats)
     }
 
 # ---------------------------------------------------------------------------
@@ -174,6 +188,13 @@ with st.spinner("Executing model evaluation across 10 Group-K-Fold VPS splits...
     results = run_evaluation()
 
 # ---------------------------------------------------------------------------
+# Sidebar Interactive Controls
+# ---------------------------------------------------------------------------
+st.sidebar.header("🕹️ Interactive Controls")
+selected_threshold = st.sidebar.slider("Classification Probability Threshold", min_value=0.05, max_value=0.95, value=0.50, step=0.05)
+selected_channel = st.sidebar.selectbox("GAF Image Visualization Channel", ["RGB Composite", "Channel 1: Packet Sizes", "Channel 2: Inter-Arrival Times", "Channel 3: Directionality"])
+
+# ---------------------------------------------------------------------------
 # Top KPI Cards
 # ---------------------------------------------------------------------------
 col1, col2, col3, col4 = st.columns(4)
@@ -181,7 +202,6 @@ col1, col2, col3, col4 = st.columns(4)
 auc_main = roc_auc_score(results["y_main"], results["oof_main_probs"])
 auc_hard = roc_auc_score(results["y_hard"], results["oof_hard_probs"])
 auc_dedup = roc_auc_score(results["dedup_labels"], results["dedup_probs"])
-f1_hard = f1_score(results["y_hard"], (results["oof_hard_probs"] >= 0.5).astype(int))
 
 with col1:
     st.markdown(f"""
@@ -233,112 +253,236 @@ st.markdown("""
 # ---------------------------------------------------------------------------
 # Tabs for Interactive Visualizations
 # ---------------------------------------------------------------------------
-tab1, tab2, tab3, tab4 = st.tabs([
-    "📈 ROC Curves & Performance",
-    "🖼️ GAF Image Inspection",
-    "🎯 Confusion Matrix",
-    "🔬 Model Architecture & Method"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📈 ROC & Precision-Recall Curves",
+    "📊 Prediction Probability Distributions",
+    "🖼️ Dynamic GAF Image Inspector",
+    "🎯 Interactive Confusion Matrix",
+    "🌐 10-Fold VPS Node Performance",
+    "🔬 Architecture & Workflow"
 ])
 
+# ---------------------------------------------------------------------------
+# Tab 1: ROC & Precision-Recall Curves
+# ---------------------------------------------------------------------------
 with tab1:
-    st.subheader("ROC Curve Comparison")
+    col_t1_a, col_t1_b = st.columns(2)
     
-    fpr_main, tpr_main, _ = roc_curve(results["y_main"], results["oof_main_probs"])
-    fpr_hard, tpr_hard, _ = roc_curve(results["y_hard"], results["oof_hard_probs"])
-    fpr_dedup, tpr_dedup, _ = roc_curve(results["dedup_labels"], results["dedup_probs"])
+    with col_t1_a:
+        st.subheader("ROC Curves Comparison")
+        fpr_main, tpr_main, _ = roc_curve(results["y_main"], results["oof_main_probs"])
+        fpr_hard, tpr_hard, _ = roc_curve(results["y_hard"], results["oof_hard_probs"])
+        fpr_dedup, tpr_dedup, _ = roc_curve(results["dedup_labels"], results["dedup_probs"])
 
-    fig = go.Figure()
+        fig_roc = go.Figure()
+        fig_roc.add_trace(go.Scatter(x=fpr_main, y=tpr_main, mode='lines', name=f'Main Dataset (AUC = {auc_main:.4f})', line=dict(color='#38bdf8', width=2.5)))
+        fig_roc.add_trace(go.Scatter(x=fpr_hard, y=tpr_hard, mode='lines', name=f'Hard Eval Set (AUC = {auc_hard:.4f})', line=dict(color='#4ade80', width=2.5)))
+        fig_roc.add_trace(go.Scatter(x=fpr_dedup, y=tpr_dedup, mode='lines', name=f'Cluster-Deduplicated (AUC = {auc_dedup:.4f})', line=dict(color='#c084fc', width=2.5)))
+        fig_roc.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode='lines', name='Length Baseline / Random (AUC = 0.5708)', line=dict(color='#ef4444', dash='dash', width=2)))
 
-    fig.add_trace(go.Scatter(x=fpr_main, y=tpr_main, mode='lines', name=f'Main Dataset (AUC = {auc_main:.4f})', line=dict(color='#38bdf8', width=2.5)))
-    fig.add_trace(go.Scatter(x=fpr_hard, y=tpr_hard, mode='lines', name=f'Hard Eval Set (AUC = {auc_hard:.4f})', line=dict(color='#4ade80', width=2.5)))
-    fig.add_trace(go.Scatter(x=fpr_dedup, y=tpr_dedup, mode='lines', name=f'Cluster-Deduplicated (AUC = {auc_dedup:.4f})', line=dict(color='#c084fc', width=2.5)))
-    
-    # Baseline comparison line
-    fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode='lines', name='Length Baseline / Random (AUC = 0.5708)', line=dict(color='#ef4444', dash='dash', width=2)))
-
-    fig.update_layout(
-        xaxis_title="False Positive Rate",
-        yaxis_title="True Positive Rate",
-        template="plotly_dark",
-        height=500,
-        margin=dict(l=20, r=20, t=30, b=20),
-        legend=dict(
-            x=0.52, 
-            y=0.15, 
-            bgcolor='#1e293b', 
-            bordercolor='#475569', 
-            borderwidth=1.5,
-            font=dict(color='#ffffff', size=13, family='Arial')
+        fig_roc.update_layout(
+            xaxis_title="False Positive Rate",
+            yaxis_title="True Positive Rate",
+            template="plotly_dark",
+            height=450,
+            margin=dict(l=20, r=20, t=30, b=20),
+            legend=dict(
+                x=0.45, y=0.15, bgcolor='#1e293b', bordercolor='#475569', borderwidth=1.5,
+                font=dict(color='#ffffff', size=12)
+            )
         )
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig_roc, use_container_width=True)
+        
+    with col_t1_b:
+        st.subheader("Precision-Recall Curves")
+        prec_hard, rec_hard, _ = precision_recall_curve(results["y_hard"], results["oof_hard_probs"])
+        prec_dedup, rec_dedup, _ = precision_recall_curve(results["dedup_labels"], results["dedup_probs"])
 
+        fig_pr = go.Figure()
+        fig_pr.add_trace(go.Scatter(x=rec_hard, y=prec_hard, mode='lines', name='Hard Eval Set', line=dict(color='#4ade80', width=2.5)))
+        fig_pr.add_trace(go.Scatter(x=rec_dedup, y=prec_dedup, mode='lines', name='Cluster-Deduplicated Set', line=dict(color='#c084fc', width=2.5)))
+
+        fig_pr.update_layout(
+            xaxis_title="Recall",
+            yaxis_title="Precision",
+            template="plotly_dark",
+            height=450,
+            margin=dict(l=20, r=20, t=30, b=20),
+            legend=dict(
+                x=0.10, y=0.15, bgcolor='#1e293b', bordercolor='#475569', borderwidth=1.5,
+                font=dict(color='#ffffff', size=12)
+            )
+        )
+        st.plotly_chart(fig_pr, use_container_width=True)
+
+# ---------------------------------------------------------------------------
+# Tab 2: Prediction Probability Distributions
+# ---------------------------------------------------------------------------
 with tab2:
-    st.subheader("Gramian Angular Field (GAF) Encodings")
-    st.write("Below are samples of 3-channel GAF images ($64 \\times 64$) generated from flow packet lengths, directionality, and inter-arrival time sequences:")
+    st.subheader("Predicted Probability Separation (Hard Evaluation Set)")
+    st.write("This plot shows how clearly the GAF-CNN model separates Normal traffic from Cryptomining traffic probabilities:")
+
+    df_probs = pd.DataFrame({
+        "Predicted Mining Probability": results["oof_hard_probs"],
+        "Traffic Class": ["Cryptomining" if label == 1 else "Normal (Length-Matched)" for label in results["y_hard"]]
+    })
+
+    fig_dist = px.histogram(
+        df_probs,
+        x="Predicted Mining Probability",
+        color="Traffic Class",
+        barmode="overlay",
+        marginal="box",
+        nbins=40,
+        color_discrete_map={"Cryptomining": "#4ade80", "Normal (Length-Matched)": "#f43f5e"}
+    )
+    fig_dist.update_layout(
+        template="plotly_dark",
+        height=450,
+        xaxis_title="Predicted Cryptomining Probability",
+        yaxis_title="Flow Count",
+        margin=dict(l=20, r=20, t=30, b=20)
+    )
+    st.plotly_chart(fig_dist, use_container_width=True)
+
+# ---------------------------------------------------------------------------
+# Tab 3: Dynamic GAF Image Inspector
+# ---------------------------------------------------------------------------
+with tab3:
+    st.subheader("Interactive GAF Time-Series Encodings Visualizer")
+    st.write(f"Viewing Channel: **{selected_channel}**")
     
+    mining_indices = np.where(results["y_hard"] == 1)[0]
+    normal_indices = np.where(results["y_hard"] == 0)[0]
+    
+    col_idx1, col_idx2 = st.columns(2)
+    with col_idx1:
+        m_sample_i = st.number_input("Cryptomining Sample Index", min_value=0, max_value=max(0, len(mining_indices)-1), value=0)
+    with col_idx2:
+        n_sample_i = st.number_input("Normal Flow Sample Index", min_value=0, max_value=max(0, len(normal_indices)-1), value=0)
+
     sample_col1, sample_col2 = st.columns(2)
 
-    with sample_col1:
-        st.markdown("**Cryptomining Flow GAF Sample**")
-        mining_indices = np.where(results["y_hard"] == 1)[0]
-        if len(mining_indices) > 0:
-            idx = mining_indices[0]
-            img = results["X_hard"][idx]  # Shape (3, 64, 64)
-            # Transpose to (64, 64, 3) for display and normalize to [0,1]
+    def process_gaf_plotly(img, channel_str):
+        if channel_str == "Channel 1: Packet Sizes":
+            fig = px.imshow(img[0], color_continuous_scale="magma")
+        elif channel_str == "Channel 2: Inter-Arrival Times":
+            fig = px.imshow(img[1], color_continuous_scale="viridis")
+        elif channel_str == "Channel 3: Directionality":
+            fig = px.imshow(img[2], color_continuous_scale="RdBu")
+        else:
             img_disp = np.transpose(img, (1, 2, 0))
             img_disp = (img_disp - img_disp.min()) / (img_disp.max() - img_disp.min() + 1e-8)
+            fig = px.imshow((img_disp * 255).astype(np.uint8))
             
-            fig_m, ax_m = plt.subplots(figsize=(4, 4))
-            ax_m.imshow(img_disp)
-            ax_m.axis('off')
-            st.pyplot(fig_m)
+        fig.update_layout(
+            template="plotly_dark",
+            height=350,
+            width=350,
+            margin=dict(l=10, r=10, t=10, b=10),
+            xaxis_visible=False,
+            yaxis_visible=False
+        )
+        return fig
+
+    with sample_col1:
+        if len(mining_indices) > 0:
+            idx = mining_indices[m_sample_i]
+            img = results["X_hard"][idx]
+            prob = results["oof_hard_probs"][idx]
+            st.markdown(f"**Cryptomining Flow** (Predicted Prob: `<b style='color:#4ade80;'>{prob:.4f}</b>`)", unsafe_allow_html=True)
+            st.plotly_chart(process_gaf_plotly(img, selected_channel), use_container_width=True)
 
     with sample_col2:
-        st.markdown("**Hard Negative Normal Flow GAF Sample**")
-        normal_indices = np.where(results["y_hard"] == 0)[0]
         if len(normal_indices) > 0:
-            idx = normal_indices[0]
+            idx = normal_indices[n_sample_i]
             img = results["X_hard"][idx]
-            img_disp = np.transpose(img, (1, 2, 0))
-            img_disp = (img_disp - img_disp.min()) / (img_disp.max() - img_disp.min() + 1e-8)
-            
-            fig_n, ax_n = plt.subplots(figsize=(4, 4))
-            ax_n.imshow(img_disp)
-            ax_n.axis('off')
-            st.pyplot(fig_n)
+            prob = results["oof_hard_probs"][idx]
+            st.markdown(f"**Normal Length-Matched Flow** (Predicted Prob: `<b style='color:#f43f5e;'>{prob:.4f}</b>`)", unsafe_allow_html=True)
+            st.plotly_chart(process_gaf_plotly(img, selected_channel), use_container_width=True)
 
-with tab3:
-    st.subheader("Confusion Matrix (Hard Evaluation Dataset)")
-    
-    threshold = st.slider("Classification Threshold", min_value=0.1, max_value=0.9, value=0.5, step=0.05)
-    preds = (results["oof_hard_probs"] >= threshold).astype(int)
-    cm = confusion_matrix(results["y_hard"], preds)
-
-    fig_cm = px.imshow(
-        cm,
-        labels=dict(x="Predicted Label", y="True Label", color="Flow Count"),
-        x=['Normal Flow', 'Cryptomining Flow'],
-        y=['Normal Flow', 'Cryptomining Flow'],
-        text_auto=True,
-        color_continuous_scale="Blues"
-    )
-    fig_cm.update_layout(template="plotly_dark", height=450)
-    st.plotly_chart(fig_cm, use_container_width=True)
-
+# ---------------------------------------------------------------------------
+# Tab 4: Interactive Confusion Matrix & Threshold Tuning
+# ---------------------------------------------------------------------------
 with tab4:
-    st.subheader("Model & Method Details")
+    st.subheader("Threshold-Adjustable Confusion Matrix & Metrics")
+    st.write(f"Current Selected Decision Threshold: **{selected_threshold:.2f}** (Adjustable from the left sidebar)")
+    
+    preds = (results["oof_hard_probs"] >= selected_threshold).astype(int)
+    cm = confusion_matrix(results["y_hard"], preds)
+    
+    col_cm1, col_cm2 = st.columns([1.2, 1])
+
+    with col_cm1:
+        fig_cm = px.imshow(
+            cm,
+            labels=dict(x="Predicted Label", y="True Label", color="Flow Count"),
+            x=['Normal Flow', 'Cryptomining Flow'],
+            y=['Normal Flow', 'Cryptomining Flow'],
+            text_auto=True,
+            color_continuous_scale="Purples"
+        )
+        fig_cm.update_layout(template="plotly_dark", height=400, margin=dict(l=20, r=20, t=30, b=20))
+        st.plotly_chart(fig_cm, use_container_width=True)
+
+    with col_cm2:
+        tn, fp, fn, tp = cm.ravel()
+        acc = (tp + tn) / len(preds)
+        prec = tp / (tp + fp) if (tp + fp) > 0 else 0
+        rec = tp / (tp + fn) if (tp + fn) > 0 else 0
+        f1 = 2 * (prec * rec) / (prec + rec) if (prec + rec) > 0 else 0
+        
+        st.markdown(f"""
+        <div style="background-color: #1e293b; padding: 1.25rem; border-radius: 10px; border: 1px solid #334155;">
+            <h4 style="color: #38bdf8; margin-top: 0;">Performance Metrics @ Threshold {selected_threshold:.2f}</h4>
+            <ul style="color: #ffffff; font-size: 1.05rem; line-height: 1.8;">
+                <li><b>Accuracy:</b> {acc:.4f}</li>
+                <li><b>Precision:</b> {prec:.4f}</li>
+                <li><b>Recall:</b> {rec:.4f}</li>
+                <li><b>F1-Score:</b> {f1:.4f}</li>
+                <li><b>True Positives (TP):</b> {tp}</li>
+                <li><b>False Positives (FP):</b> {fp}</li>
+                <li><b>True Negatives (TN):</b> {tn}</li>
+                <li><b>False Negatives (FN):</b> {fn}</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------------------------
+# Tab 5: 10-Fold VPS Node Performance Breakdown
+# ---------------------------------------------------------------------------
+with tab5:
+    st.subheader("Group K-Fold Validation Performance Across 10 Monitored VPS Server Nodes")
+    st.write("To prevent data leakage, each fold holds out a completely independent target server VPS node:")
+
+    st.dataframe(results["vps_stats"], use_container_width=True)
+
+    fig_vps = px.bar(
+        results["vps_stats"],
+        x="VPS Node",
+        y="Hard Fold AUC",
+        color="Hard Fold AUC",
+        color_continuous_scale="Viridis",
+        title="AUC Score per Held-Out VPS Node Fold"
+    )
+    fig_vps.update_layout(template="plotly_dark", height=400, yaxis_range=[0.8, 1.05])
+    st.plotly_chart(fig_vps, use_container_width=True)
+
+# ---------------------------------------------------------------------------
+# Tab 6: Architecture & Workflow
+# ---------------------------------------------------------------------------
+with tab6:
+    st.subheader("Model Architecture & Method Summary")
     st.markdown("""
     - **Architecture**: `SmallCNN` (~3,729 parameters)
-      - Layer 1: Conv2d(3 → 8, kernel=3) + ReLU + MaxPool2d(2)
-      - Layer 2: Conv2d(8 → 16, kernel=3) + ReLU + MaxPool2d(2)
-      - Layer 3: Conv2d(16 → 16, kernel=3) + ReLU + AdaptiveAvgPool2d(1)
-      - Output: Linear(16 → 1) with sigmoid output logit
-    - **Validation Strategy**: 10 Group-K-Fold CV holding out 10 distinct monitored server VPS node IPs (`157.230.14.71`, etc.)
-    - **Feature Representation**: 
-      - Channel 1: Packet Size Sequence GAF
-      - Channel 2: Inter-Arrival Time (IAT) Sequence GAF
+      - Layer 1: `Conv2d(3 → 8, kernel=3)` + `ReLU()` + `MaxPool2d(2)`
+      - Layer 2: `Conv2d(8 → 16, kernel=3)` + `ReLU()` + `MaxPool2d(2)`
+      - Layer 3: `Conv2d(16 → 16, kernel=3)` + `ReLU()` + `AdaptiveAvgPool2d(1)`
+      - Output: `Linear(16 → 1)` with sigmoid output logit
+    - **Validation Strategy**: 10 Group-K-Fold CV holding out 10 distinct monitored server VPS node IPs (`157.230.14.71`, `157.230.14.73`, etc.)
+    - **Feature Representation (3-Channel 64x64 GAF)**: 
+      - Channel 1: Packet Size Time-Series GAF
+      - Channel 2: Inter-Arrival Time (IAT) Time-Series GAF
       - Channel 3: Packet Directionality Matrix
     """)
 
